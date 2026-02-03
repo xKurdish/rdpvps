@@ -1,0 +1,63 @@
+name: Secure YAD
+
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 350  # 5 کاتژمێر = 300 خولەک
+
+    steps:
+      - name: Configure Core RDP Settings
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User
+        run: |
+          $password = "Ahmed1122$"  # پاسوۆردێکی سادە
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name "Yad" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "Yad"
+          echo "RDP_PASS=Ahmed1122$" >> $env:GITHUB_ENV
+
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "$installerPath", "/quiet", "/norestart" -Wait
+
+      - name: Start Tailscale
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-rdp-$env:GITHUB_RUN_ID
+          Start-Sleep -Seconds 30
+          $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          Write-Host "RDP Ready! IP: $tsIP - User: Yad - Pass: Ahmed1122$"
+
+      - name: Auto-shutdown after 5 hours
+        run: |
+          Write-Host "=== RDP ACCESS ==="
+          Write-Host "IP: $env:TAILSCALE_IP"
+          Write-Host "User: Yad" 
+          Write-Host "Pass: Ahmed1122$"
+          Write-Host "=================="
+          Write-Host "ئەم RDP ئۆتۆماتیکی دوای ٥ کاتژمێر دەکوژێتەوە"
+          Write-Host "کاتی دەستپێکردن: $(Get-Date)"
+          
+          # کاونتەر بۆ ٥ کاتژمێر (١٨٠٠٠ چرکە)
+          $totalSeconds = 18000
+          $checkInterval = 300  # ھەر ٥ خولەک جارێک ڕاپۆرت بدە
+          
+          for ($i = 0; $i -lt $totalSeconds; $i += $checkInterval) {
+              $remainingMinutes = [math]::Ceiling(($totalSeconds - $i) / 60)
+              Write-Host "[$(Get-Date)] ماوەی مابووە: $remainingMinutes خولەک - CPU Usage: ~0%"
+              Start-Sleep -Seconds $checkInterval
+          }
+          
+          Write-Host "کاتی تەواوبوون! $(Get-Date)"
+          Write-Host "RDP ئێستا خۆکارانە دەکوژێتەوە"
